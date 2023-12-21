@@ -1,0 +1,174 @@
+import dash
+from dash import dcc, html
+from dash.dependencies import Input, Output
+import plotly.express as px
+import pandas as pd
+import os
+import plotly.graph_objects as go
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+
+
+
+# Daten einlesen
+df = pd.read_csv("C:\\Users\\yasmi\\OneDrive\\Dokumente\\Python Interactive Dashboard\\eigenesProjekt_Covid_Dashboard\\owid-covid-data.csv",
+                 dtype={"FIPS": str})
+
+# NaN-Werte entfernen
+df.dropna(subset=['continent', 'total_cases'], inplace=True)
+
+# Durchschnitt der neuen Fälle berechnen
+average_new_cases = round(df['new_cases'].mean())
+
+# NaN-Werte in 'new_cases' mit dem Durchschnitt füllen
+df['new_cases'].fillna(average_new_cases, inplace=True)
+
+# DataFrame nach 'location' und 'continent' gruppieren und die Summe von 'new_cases' berechnen
+df_summed = df.groupby(['location', 'continent'], as_index=False)['new_cases'].sum()
+
+# Farbzuordnung für Kontinente definieren
+continent_color_mapping = {
+    'Africa': 'orange',
+    'Asia': 'green',
+    'Europe': 'blue',
+    'North America': 'red',
+    'Oceania': 'purple',
+    'South America': 'turquoise'
+}
+
+# Erstellen des Pie-Charts mit gemeinsamer Farbsequenz
+fig_pie = px.pie(df, 
+                 values='new_cases_per_million', 
+                 names='continent', 
+                 title='New Corona Cases per Million per Continent', 
+                 hole=.5,
+                 template="plotly",
+                 color='continent',
+                 color_discrete_map=continent_color_mapping)
+
+
+# Dash App erstellen
+app = dash.Dash(__name__)
+
+# Dropdown-Menü für Kontinentauswahl erstellen
+continent_options = [{'label': 'All Continents', 'value': 'all'}] + [{'label': continent, 'value': continent} for continent in df_summed['continent'].unique()]
+
+
+# Layout für die Dash App erstellen
+app.layout = html.Div([
+    # HTML-Überschrift (H1) für das gesamte Dashboard
+    html.H1("COVID-19 Dashboard - New Cases per Continent"),
+    # Box für den Pie-Chart
+    html.Div([
+        dcc.Graph(
+            # ID des Pie-Charts
+            id='pie-chart',
+            # Vordefiniertes Diagramm einfügen
+            figure=fig_pie
+        )
+    ], style={'border': '2px solid black', 'padding': '10px', 'margin': '10px'}),  # Stil für die Box definieren
+
+    # Box für die Bubble-Map und das Histogramm
+    html.Div([
+        # Dropdown-Menü für die Auswahl des Kontinents
+        dcc.Dropdown(
+            # ID des Dropdown-Elements
+            id='continent-dropdown',
+            # Optionen für die Dropdown-Liste
+            options=continent_options,
+            # Standardwert für die Auswahl setzen
+            value='all',
+            # Mehrfach-Auswahl verbieten
+            multi=False
+        ),
+        # Graph für die Darstellung einer Blasenkarte (Bubble Map)
+        dcc.Graph(
+            # ID des Bubble-Map-Elements
+            id='bubble-map',
+        ),
+        # Graph für das Histogramm mit Dropdown-Menü
+        dcc.Graph(
+            # ID des Histogramms
+            id='histogram-dropdown',
+        ),
+    # Stil für die Box definieren
+    ], style={'border': '2px solid black', 'padding': '10px', 'margin': '10px'}),
+])
+
+
+# Callback-Funktion für die Aktualisierung der Graphen basierend auf der Dropdown-Auswahl
+@app.callback(
+    [Output('bubble-map', 'figure'),
+     Output('histogram-dropdown', 'figure')],
+    [Input('continent-dropdown', 'value')]
+)
+def update_graphs(selected_continent):
+    # Farbzuordnung für Kontinente definieren
+    continent_color_mapping = {
+        'Africa': 'orange',
+        'Asia': 'green',
+        'Europe': 'blue',
+        'North America': 'red',
+        'Oceania': 'purple',
+        'South America': 'turquoise'
+    }
+
+    # Überprüfen, ob 'all' ausgewählt wurde, um alle Kontinente anzuzeigen oder
+    # andernfalls das DataFrame auf die ausgewählte Kontinent-Option filtern
+    if selected_continent == 'all':
+        # Das ungefilterte DataFrame verwenden
+        filtered_df = df_summed
+    else:
+        # DataFrame nach Kontinent filtern
+        filtered_df = df_summed[df_summed['continent'] == selected_continent]
+
+    # Update Bubble Map mit gemeinsamer Farbsequenz
+    updated_fig_bubble_chart = px.scatter_geo(
+        filtered_df,
+        locations="location",
+        locationmode="country names",
+        color="continent",
+        size="new_cases",
+        projection="natural earth",
+        labels={'new_cases': 'New Cases'},
+        title='New Corona Cases per Continent',
+        template="plotly",
+        hover_name="location",
+        size_max=25,
+        # Farbzuordnung für die Bubble Map
+        color_discrete_map=continent_color_mapping
+    )
+
+    # Erstelle das Histogramm für den ausgewählten Kontinent mit gemeinsamer Farbsequenz
+    histogram_fig = go.Figure()
+
+    if selected_continent == 'all':
+        histogram_fig.add_trace(go.Bar(x=df_summed['location'], y=df_summed['new_cases'], name='All continents',
+                                       # Farbe für alle Kontinente
+                                       marker_color=list(continent_color_mapping.values())))
+    else:
+        histogram_fig.add_trace(go.Bar(x=filtered_df['location'], y=filtered_df['new_cases'], name=selected_continent,
+                                       marker_color=continent_color_mapping[selected_continent]))
+
+    # Setze das Layout für das Histogramm
+    histogram_fig.update_layout(
+        barmode='group',
+        # Ändere die Hintergrundfarbe hier:
+        #plot_bgcolor='lightblue',
+        # Ändere die Hintergrundfarbe für den Plotrahmen hier:
+        #paper_bgcolor='lightgray'
+    )
+
+    # Rückgabe der aktualisierten Figuren für Bubble Map, Line Plot, Histogramm mit Dropdown-Menü
+    return updated_fig_bubble_chart, histogram_fig
+
+
+
+# Fehlerbehandlung für die Dash-Anwendung
+@app.server.errorhandler(Exception)
+def handle_exceptions(error):
+    # Gibt die Fehlermeldung auf der Konsole aus.
+    print(f"Fehler behandelt: {error}")
+    # Zeigt eine allgemeine Fehlermeldung für den Benutzer an.
+    return "Ein Fehler ist aufgetreten."
